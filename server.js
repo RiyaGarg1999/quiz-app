@@ -23,7 +23,9 @@ const limiter = rateLimit({
 app.use(limiter);
 
 // Initialize Database
-const db = new sqlite3.Database('quiz.db');
+// Use in-memory database for serverless environment or /tmp for file-based
+const dbPath = process.env.VERCEL ? ':memory:' : 'quiz.db';
+const db = new sqlite3.Database(dbPath);
 
 // Create tables
 db.serialize(() => {
@@ -472,7 +474,7 @@ app.delete('/admin/questions/:id', (req, res) => {
 });
 
 // Serve static files
-app.use(express.static('public'));
+app.use(express.static(path.join(__dirname, 'public')));
 
 // Serve quiz page for specific session
 app.get('/quiz/:sessionId', (req, res) => {
@@ -484,7 +486,12 @@ app.get('/', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'admin.html'));
 });
 
-// Start server
-app.listen(PORT, () => {
-  console.log(`Quiz application running on http://localhost:${PORT}`);
-});
+// Export for Vercel
+module.exports = app;
+
+// For local development
+if (require.main === module) {
+  app.listen(PORT, () => {
+    console.log(`Quiz application running on http://localhost:${PORT}`);
+  });
+}
