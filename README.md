@@ -1,5 +1,5 @@
 <<<<<<< HEAD
-# Quiz Application
+# Quiz Application 
 
 A comprehensive timed quiz application with 24-hour session validity, automatic certificate generation, and admin panel.
 
