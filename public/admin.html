@@ -442,15 +442,43 @@
                 <p style="margin-top: 15px;"><strong>Expires:</strong> <span id="expiryTime"></span></p>
                 <p><strong>Session ID:</strong> <span id="sessionId"></span></p>
                 
-                <button class="btn" style="margin-top: 20px; background: #28a745;" id="viewResultsBtn">
-                    View Results
-                </button>
+                <div style="margin-top: 20px;">
+                    <div style="margin-bottom: 15px;">
+                        <label style="display: block; margin-bottom: 5px; font-weight: 600; color: #333;">Export File Name (for this session):</label>
+                        <input 
+                            type="text" 
+                            id="currentSessionFilename" 
+                            placeholder="e.g., Math_Quiz_Grade_10_January_2025"
+                            style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px; font-size: 14px; margin-bottom: 5px;"
+                        >
+                        <small style="color: #666;">Leave empty for default filename with date/time</small>
+                    </div>
+                    
+                    <div style="display: flex; gap: 15px;">
+                        <button class="btn" style="background: #28a745;" id="viewResultsBtn">
+                            📊 View Results
+                        </button>
+                        <button class="btn" style="background: #17a2b8;" id="exportCsvBtn">
+                            📥 Export CSV
+                        </button>
+                    </div>
+                </div>
             </div>
 
             <div class="results-section" id="resultsSection">
                 <h3>Quiz Results</h3>
                 <div id="resultsContent">
                     <p>Loading results...</p>
+                </div>
+            </div>
+
+            <!-- Export Past Results Section -->
+            <div class="past-exports-section" id="pastExportsSection">
+                <h3>📥 Export Past Quiz Results</h3>
+                <p>Export results from your recent quiz sessions with custom file names for easy tracking.</p>
+                
+                <div id="pastSessionsList">
+                    <p>Loading recent sessions...</p>
                 </div>
             </div>
 
@@ -608,7 +636,18 @@
                     document.getElementById('expiryTime').textContent = new Date(data.expiresAt).toLocaleString();
                     document.getElementById('quizLinkSection').style.display = 'block';
                     
+                    // Store session in localStorage for persistence
+                    localStorage.setItem('currentQuizSession', JSON.stringify({
+                        sessionId: data.sessionId,
+                        quizLink: data.quizLink,
+                        expiresAt: data.expiresAt,
+                        createdAt: new Date().toISOString()
+                    }));
+                    
                     showAlert('Quiz session created successfully!', 'success');
+                    
+                    // Refresh recent sessions list
+                    loadRecentSessions();
                 } else {
                     showAlert(data.error || 'Failed to create session', 'error');
                 }
@@ -635,7 +674,22 @@
         document.getElementById('viewResultsBtn').addEventListener('click', async () => {
             if (!currentSessionId) return;
             
-            document.getElementById('resultsSection').style.display = 'block';
+            const resultsSection = document.getElementById('resultsSection');
+            const viewBtn = document.getElementById('viewResultsBtn');
+            
+            // Toggle results visibility
+            if (resultsSection.style.display === 'block') {
+                // Hide results
+                resultsSection.style.display = 'none';
+                viewBtn.textContent = '📊 View Results';
+                viewBtn.style.background = '#28a745';
+                return;
+            }
+            
+            // Show results
+            resultsSection.style.display = 'block';
+            viewBtn.textContent = '🔼 Hide Results';
+            viewBtn.style.background = '#6c757d';
             
             try {
                 const response = await fetch(`/admin/results/${currentSessionId}`);
@@ -651,11 +705,13 @@
                             <table class="results-table">
                                 <thead>
                                     <tr>
-                                        <th>Attempt ID</th>
-                                        <th>IP Address</th>
+                                        <th>Student Name</th>
+                                        <th>Email</th>
+                                        <th>School</th>
+                                        <th>Score</th>
                                         <th>Started At</th>
                                         <th>Completed At</th>
-                                        <th>Score</th>
+                                        <th>IP Address</th>
                                     </tr>
                                 </thead>
                                 <tbody>
@@ -664,11 +720,13 @@
                         data.results.forEach(result => {
                             tableHTML += `
                                 <tr>
-                                    <td>${result.id}</td>
-                                    <td>${result.user_ip}</td>
-                                    <td>${new Date(result.started_at).toLocaleString()}</td>
-                                    <td>${new Date(result.completed_at).toLocaleString()}</td>
+                                    <td>${result.student_name || 'N/A'}</td>
+                                    <td>${result.student_email || 'N/A'}</td>
+                                    <td>${result.school_name || 'N/A'}</td>
                                     <td>${result.score}/5</td>
+                                    <td>${result.started_at ? new Date(result.started_at).toLocaleString() : 'N/A'}</td>
+                                    <td>${new Date(result.completed_at).toLocaleString()}</td>
+                                    <td>${result.user_ip}</td>
                                 </tr>
                             `;
                         });
@@ -684,12 +742,283 @@
             }
         });
 
+        // Export CSV functionality with custom filename
+        document.getElementById('exportCsvBtn').addEventListener('click', async () => {
+            if (!currentSessionId) return;
+            
+            // Get custom filename or use default
+            const customFilename = document.getElementById('currentSessionFilename').value.trim() || 
+                                 `Quiz_Results_${new Date().toISOString().split('T')[0]}_${new Date().toTimeString().slice(0,5).replace(':','-')}`;
+            
+            const exportBtn = document.getElementById('exportCsvBtn');
+            const originalText = exportBtn.textContent;
+            exportBtn.disabled = true;
+            exportBtn.textContent = 'Exporting...';
+            
+            try {
+                const response = await fetch(`/admin/export/${currentSessionId}`);
+                
+                if (response.ok) {
+                    // Create blob and download with custom filename
+                    const blob = await response.blob();
+                    const url = window.URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.style.display = 'none';
+                    a.href = url;
+                    a.download = `${customFilename}.csv`;
+                    document.body.appendChild(a);
+                    a.click();
+                    window.URL.revokeObjectURL(url);
+                    document.body.removeChild(a);
+                    
+                    showAlert(`CSV exported successfully as "${customFilename}.csv"!`, 'success');
+                } else {
+                    const data = await response.json();
+                    showAlert(data.error || 'Failed to export CSV', 'error');
+                }
+            } catch (error) {
+                showAlert('Network error occurred', 'error');
+            } finally {
+                exportBtn.disabled = false;
+                exportBtn.textContent = originalText;
+            }
+        });
+
         // Auto-refresh results every 30 seconds if results section is visible
         setInterval(() => {
             if (document.getElementById('resultsSection').style.display === 'block' && currentSessionId) {
                 document.getElementById('viewResultsBtn').click();
             }
         }, 30000);
+
+        // Recent Sessions Management
+        async function loadRecentSessions() {
+            try {
+                const response = await fetch('/admin/sessions');
+                const data = await response.json();
+                
+                if (response.ok && data.sessions) {
+                    displayRecentSessions(data.sessions);
+                } else {
+                    document.getElementById('pastSessionsList').innerHTML = '<p>Failed to load recent sessions.</p>';
+                }
+            } catch (error) {
+                document.getElementById('pastSessionsList').innerHTML = '<p>Error loading sessions.</p>';
+            }
+        }
+
+        function displayRecentSessions(sessions) {
+            const container = document.getElementById('pastSessionsList');
+            
+            if (sessions.length === 0) {
+                container.innerHTML = '<p>No recent sessions with completed attempts found.</p>';
+                return;
+            }
+
+            // Filter to only show sessions with completed attempts
+            const sessionsWithResults = sessions.filter(session => session.completed_attempts > 0);
+            
+            if (sessionsWithResults.length === 0) {
+                container.innerHTML = '<p>No sessions with completed attempts found.</p>';
+                return;
+            }
+
+            let html = '<div style="display: grid; gap: 10px;">';
+            
+            sessionsWithResults.forEach(session => {
+                const createdAt = new Date(session.created_at).toLocaleDateString();
+                const sessionTime = new Date(session.created_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+                const defaultFilename = `Quiz_Results_${createdAt.replace(/\//g, '-')}_${sessionTime.replace(/:/g, '-')}`;
+                
+                html += `
+                    <div style="border: 1px solid #ddd; border-radius: 6px; padding: 12px; background: #f8f9fa;">
+                        <div style="display: flex; align-items: center; gap: 15px; flex-wrap: wrap;">
+                            <div style="flex: 1; min-width: 200px;">
+                                <strong>${createdAt} at ${sessionTime}</strong>
+                                <small style="color: #666; margin-left: 10px;">(${session.completed_attempts} completed)</small>
+                            </div>
+                            
+                            <div style="flex: 2; min-width: 250px;">
+                                <input 
+                                    type="text" 
+                                    id="filename-${session.id}" 
+                                    value="${defaultFilename}"
+                                    style="width: 100%; padding: 6px 8px; border: 1px solid #ccc; border-radius: 4px; font-size: 13px;"
+                                    placeholder="Export filename"
+                                >
+                            </div>
+                            
+                            <div style="display: flex; gap: 8px;">
+                                <button class="btn btn-small" onclick="exportSessionWithCustomName('${session.id}')" style="background: #17a2b8; font-size: 12px; padding: 6px 12px;">
+                                    📥 Export
+                                </button>
+                                <button class="btn btn-small" onclick="viewSessionResults('${session.id}')" style="background: #28a745; font-size: 12px; padding: 6px 12px;">
+                                    👁️ Preview
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            });
+            
+            html += '</div>';
+            container.innerHTML = html;
+        }
+
+        function viewSessionResults(sessionId) {
+            // Find the specific preview button that was clicked
+            const previewBtn = event.target;
+            
+            // Check if results are currently being shown for this session
+            const existingResults = document.getElementById(`results-${sessionId}`);
+            
+            if (existingResults && existingResults.style.display !== 'none') {
+                // Hide existing results
+                existingResults.style.display = 'none';
+                previewBtn.textContent = '👁️ Preview';
+                previewBtn.style.background = '#28a745';
+                return;
+            }
+            
+            // Show loading
+            previewBtn.textContent = 'Loading...';
+            previewBtn.disabled = true;
+            
+            // Fetch results for this specific session
+            fetch(`/admin/results/${sessionId}`)
+                .then(response => response.json())
+                .then(data => {
+                    if (data.results && data.results.length > 0) {
+                        // Create or update results display
+                        let resultsHTML = `
+                            <div id="results-${sessionId}" style="margin-top: 10px; padding: 10px; border: 1px solid #ddd; border-radius: 4px; background: white;">
+                                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                                    <strong>Results for this session (${data.results.length} attempts):</strong>
+                                    <button onclick="document.getElementById('results-${sessionId}').style.display='none'; this.parentElement.parentElement.parentElement.querySelector('button[onclick*=viewSessionResults]').textContent='👁️ Preview'; this.parentElement.parentElement.parentElement.querySelector('button[onclick*=viewSessionResults]').style.background='#28a745';" style="background: #dc3545; color: white; border: none; padding: 4px 8px; border-radius: 3px; cursor: pointer;">✕</button>
+                                </div>
+                                <div style="max-height: 200px; overflow-y: auto;">
+                                    <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
+                                        <thead>
+                                            <tr style="background: #f8f9fa;">
+                                                <th style="border: 1px solid #ddd; padding: 6px; text-align: left;">Student</th>
+                                                <th style="border: 1px solid #ddd; padding: 6px; text-align: left;">Email</th>
+                                                <th style="border: 1px solid #ddd; padding: 6px; text-align: center;">Score</th>
+                                                <th style="border: 1px solid #ddd; padding: 6px; text-align: center;">Completed</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                        `;
+                        
+                        data.results.forEach(result => {
+                            resultsHTML += `
+                                <tr>
+                                    <td style="border: 1px solid #ddd; padding: 6px;">${result.student_name || 'N/A'}</td>
+                                    <td style="border: 1px solid #ddd; padding: 6px;">${result.student_email || 'N/A'}</td>
+                                    <td style="border: 1px solid #ddd; padding: 6px; text-align: center;">${result.score}/5</td>
+                                    <td style="border: 1px solid #ddd; padding: 6px; text-align: center;">${new Date(result.completed_at).toLocaleString()}</td>
+                                </tr>
+                            `;
+                        });
+                        
+                        resultsHTML += '</tbody></table></div></div>';
+                        
+                        // Remove existing results if any
+                        if (existingResults) {
+                            existingResults.remove();
+                        }
+                        
+                        // Add results after the session card
+                        const sessionCard = previewBtn.closest('div[style*="border: 1px solid"]');
+                        sessionCard.insertAdjacentHTML('afterend', resultsHTML);
+                        
+                        // Update button
+                        previewBtn.textContent = '🔼 Hide Preview';
+                        previewBtn.style.background = '#6c757d';
+                    } else {
+                        alert('No results found for this session.');
+                    }
+                })
+                .catch(error => {
+                    console.error('Error loading results:', error);
+                    alert('Failed to load results.');
+                })
+                .finally(() => {
+                    previewBtn.disabled = false;
+                    if (previewBtn.textContent === 'Loading...') {
+                        previewBtn.textContent = '👁️ Preview';
+                    }
+                });
+        }
+
+        async function exportSessionWithCustomName(sessionId) {
+            const filenameInput = document.getElementById(`filename-${sessionId}`);
+            const customFilename = filenameInput.value.trim() || `Quiz_Results_${new Date().toISOString().split('T')[0]}`;
+            
+            const exportBtn = event.target;
+            const originalText = exportBtn.textContent;
+            exportBtn.disabled = true;
+            exportBtn.textContent = 'Exporting...';
+            
+            try {
+                const response = await fetch(`/admin/export/${sessionId}`);
+                
+                if (response.ok) {
+                    // Create blob and download with custom filename
+                    const blob = await response.blob();
+                    const url = window.URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.style.display = 'none';
+                    a.href = url;
+                    a.download = `${customFilename}.csv`;
+                    document.body.appendChild(a);
+                    a.click();
+                    window.URL.revokeObjectURL(url);
+                    document.body.removeChild(a);
+                    
+                    showAlert(`CSV exported successfully as "${customFilename}.csv"!`, 'success');
+                } else {
+                    const data = await response.json();
+                    showAlert(data.error || 'Failed to export CSV', 'error');
+                }
+            } catch (error) {
+                showAlert('Network error occurred', 'error');
+            } finally {
+                exportBtn.disabled = false;
+                exportBtn.textContent = originalText;
+            }
+        }
+
+        // Restore current session on page load (simplified - just restore link display)
+        function restoreCurrentSession() {
+            const savedSession = localStorage.getItem('currentQuizSession');
+            if (savedSession) {
+                try {
+                    const session = JSON.parse(savedSession);
+                    const expiryTime = new Date(session.expiresAt);
+                    
+                    // Only restore if not expired
+                    if (expiryTime > new Date()) {
+                        currentSessionId = session.sessionId;
+                        document.getElementById('quizLinkBox').textContent = session.quizLink;
+                        document.getElementById('sessionId').textContent = session.sessionId;
+                        document.getElementById('expiryTime').textContent = new Date(session.expiresAt).toLocaleString();
+                        document.getElementById('quizLinkSection').style.display = 'block';
+                    } else {
+                        // Remove expired session from storage
+                        localStorage.removeItem('currentQuizSession');
+                    }
+                } catch (error) {
+                    console.error('Error restoring session:', error);
+                    localStorage.removeItem('currentQuizSession');
+                }
+            }
+        }
+
+        // Load recent sessions on page load
+        document.addEventListener('DOMContentLoaded', () => {
+            loadRecentSessions();
+            restoreCurrentSession();
+        });
 
         // Question Management Functions
         let allQuestions = [];

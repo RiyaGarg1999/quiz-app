@@ -74,7 +74,7 @@ db.serialize(() => {
   // Quiz sessions table
   db.run(`CREATE TABLE IF NOT EXISTS quiz_sessions (
     id TEXT PRIMARY KEY,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    created_at DATETIME DEFAULT (datetime('now')),
     expires_at DATETIME,
     is_active BOOLEAN DEFAULT 1,
     admin_email TEXT
@@ -85,7 +85,10 @@ db.serialize(() => {
     id TEXT PRIMARY KEY,
     session_id TEXT,
     user_ip TEXT,
-    started_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    student_name TEXT,
+    student_email TEXT,
+    school_name TEXT,
+    started_at DATETIME DEFAULT (datetime('now')),
     completed_at DATETIME,
     score INTEGER,
     answers TEXT,
@@ -202,20 +205,40 @@ function generateCertificate(attemptId, score, callback) {
 app.post('/admin/create-session', (req, res) => {
   const { adminEmail } = req.body;
   const sessionId = uuidv4();
-  const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours from now
+  const now = new Date();
+  const expiresAt = new Date(now.getTime() + 24 * 60 * 60 * 1000); // 24 hours from now
+  
+  console.log('Creating session:', {
+    sessionId: sessionId.substring(0, 8) + '...',
+    createdAt: now.toISOString(),
+    localTime: now.toLocaleString(),
+    expiresAt: expiresAt.toISOString(),
+    adminEmail
+  });
 
   db.run(
-    "INSERT INTO quiz_sessions (id, expires_at, admin_email) VALUES (?, ?, ?)",
-    [sessionId, expiresAt.toISOString(), adminEmail],
+    "INSERT INTO quiz_sessions (id, created_at, expires_at, admin_email) VALUES (?, ?, ?, ?)",
+    [sessionId, now.toISOString(), expiresAt.toISOString(), adminEmail],
     function(err) {
       if (err) {
+        console.error('Failed to create session:', err);
         return res.status(500).json({ error: 'Failed to create session' });
       }
       
+      // Generate the appropriate base URL based on environment
+      const baseUrl = process.env.VERCEL_URL 
+        ? `https://${process.env.VERCEL_URL}` 
+        : process.env.NODE_ENV === 'production' 
+          ? `https://quiz-app-phi-ruby-52.vercel.app`  // Your actual Vercel URL
+          : `http://localhost:${PORT}`;
+
+      console.log('Session created successfully at local time:', now.toLocaleString());
+
       res.json({
         sessionId,
-        quizLink: `http://localhost:${PORT}/quiz/${sessionId}`,
-        expiresAt: expiresAt.toISOString()
+        quizLink: `${baseUrl}/quiz/${sessionId}`,
+        expiresAt: expiresAt.toISOString(),
+        createdAt: now.toISOString()
       });
     }
   );
@@ -224,7 +247,10 @@ app.post('/admin/create-session', (req, res) => {
 // Get quiz questions and check session validity (API route)
 app.get('/api/quiz/:sessionId', (req, res) => {
   const { sessionId } = req.params;
-  const userIp = req.ip;
+  // Better IP detection for serverless environments
+  const userIp = req.headers['x-forwarded-for'] || req.connection.remoteAddress || req.ip || 'anonymous';
+
+  console.log('Loading quiz:', { sessionId, userIp });
 
   // Check if session exists and is valid
   db.get(
@@ -239,38 +265,151 @@ app.get('/api/quiz/:sessionId', (req, res) => {
         return res.status(410).json({ error: 'Quiz session has expired' });
       }
 
-      // Check if user has already completed the quiz
-      db.get(
-        "SELECT * FROM quiz_attempts WHERE session_id = ? AND user_ip = ?",
-        [sessionId, userIp],
-        (err, attempt) => {
-          if (err) {
-            return res.status(500).json({ error: 'Database error' });
-          }
+          // Check if user has already completed the quiz or has an active attempt
+          db.get(
+            "SELECT * FROM quiz_attempts WHERE session_id = ? AND user_ip = ?",
+            [sessionId, userIp],
+            (err, attempt) => {
+              if (err) {
+                return res.status(500).json({ error: 'Database error' });
+              }
 
-          if (attempt && attempt.is_completed) {
-            return res.json({
-              alreadyCompleted: true,
-              score: attempt.score,
-              attemptId: attempt.id
-            });
-          }
+              if (attempt && attempt.is_completed) {
+                return res.json({
+                  alreadyCompleted: true,
+                  score: attempt.score,
+                  attemptId: attempt.id
+                });
+              }
 
-          // Get quiz questions
-          db.all("SELECT id, question, option_a, option_b, option_c, option_d FROM quiz_questions", (err, questions) => {
-            if (err) {
-              return res.status(500).json({ error: 'Failed to fetch questions' });
+              // If there's an active attempt, check if time has expired
+              if (attempt && !attempt.is_completed) {
+                const startTime = new Date(attempt.started_at);
+                const now = new Date();
+                const elapsedTime = now - startTime; // in milliseconds
+                const timeLimit = 10 * 60 * 1000; // 10 minutes in milliseconds
+                const remainingTime = timeLimit - elapsedTime;
+
+                console.log('Timer check:', {
+                  attemptId: attempt.id,
+                  startTime: startTime.toISOString(),
+                  now: now.toISOString(),
+                  elapsedTime: Math.floor(elapsedTime / 1000) + 's',
+                  remainingTime: Math.floor(remainingTime / 1000) + 's',
+                  timeLimit: Math.floor(timeLimit / 1000) + 's',
+                  willExpire: remainingTime <= 0
+                });
+
+                if (remainingTime <= 0) {
+                  // Time expired, auto-submit with current saved answers
+                  console.log('Auto-submitting expired quiz for attempt:', attempt.id);
+                  
+                  // Use existing saved answers or empty if none
+                  let finalAnswers = {};
+                  let finalScore = 0;
+                  
+                  try {
+                    if (attempt.answers) {
+                      finalAnswers = JSON.parse(attempt.answers);
+                      
+                      // Calculate score with saved answers
+                      db.all("SELECT id, correct_answer FROM quiz_questions", (err, questions) => {
+                        if (!err && questions) {
+                          questions.forEach(question => {
+                            if (finalAnswers[question.id] === question.correct_answer) {
+                              finalScore++;
+                            }
+                          });
+                        }
+                        
+                        // Update with calculated score
+                        const completedAt = new Date().toISOString();
+                        console.log('Auto-submitting expired quiz - completed at:', completedAt, 'local:', new Date().toLocaleString());
+                        
+                        db.run(
+                          "UPDATE quiz_attempts SET completed_at = ?, score = ?, is_completed = 1 WHERE id = ?",
+                          [completedAt, finalScore, attempt.id],
+                          function(err) {
+                            if (err) {
+                              console.error('Failed to auto-submit expired quiz:', err);
+                            }
+                          }
+                        );
+                      });
+                    } else {
+                      // No saved answers, score is 0
+                      const completedAt = new Date().toISOString();
+                      console.log('Auto-submitting expired quiz (no answers) - completed at:', completedAt, 'local:', new Date().toLocaleString());
+                      
+                      db.run(
+                        "UPDATE quiz_attempts SET completed_at = ?, score = 0, answers = '{}', is_completed = 1 WHERE id = ?",
+                        [completedAt, attempt.id],
+                        function(err) {
+                          if (err) {
+                            console.error('Failed to auto-submit expired quiz:', err);
+                          }
+                        }
+                      );
+                    }
+                  } catch (e) {
+                    console.error('Error processing saved answers on expiry:', e);
+                  }
+
+                  return res.json({
+                    timeExpired: true,
+                    message: 'Quiz time has expired. Your saved answers have been submitted.',
+                    attemptId: attempt.id
+                  });
+                } else {
+                  // Time remaining, return quiz with remaining time
+                  console.log('Quiz has remaining time:', Math.floor(remainingTime / 1000) + 's');
+                }
+
+                // Return existing attempt with remaining time
+                db.all("SELECT id, question, option_a, option_b, option_c, option_d FROM quiz_questions", (err, questions) => {
+                  if (err) {
+                    return res.status(500).json({ error: 'Failed to fetch questions' });
+                  }
+
+                  // Parse existing answers if any
+                  let savedAnswers = {};
+                  try {
+                    if (attempt.answers) {
+                      savedAnswers = JSON.parse(attempt.answers);
+                    }
+                  } catch (e) {
+                    console.error('Error parsing saved answers:', e);
+                  }
+
+                  return res.json({
+                    sessionId,
+                    questions,
+                    timeLimit: remainingTime, // remaining time in milliseconds
+                    alreadyStarted: true,
+                    attemptId: attempt.id,
+                    alreadyCompleted: false,
+                    startTime: startTime.toISOString(),
+                    savedAnswers: savedAnswers
+                  });
+                });
+              } else {
+                // No attempt yet, return questions for student info form
+                db.all("SELECT id, question, option_a, option_b, option_c, option_d FROM quiz_questions", (err, questions) => {
+                  if (err) {
+                    return res.status(500).json({ error: 'Failed to fetch questions' });
+                  }
+
+                  res.json({
+                    sessionId,
+                    questions,
+                    timeLimit: 10 * 60 * 1000, // 10 minutes in milliseconds
+                    alreadyCompleted: false,
+                    alreadyStarted: false
+                  });
+                });
+              }
             }
-
-            res.json({
-              sessionId,
-              questions,
-              timeLimit: 10 * 60 * 1000, // 10 minutes in milliseconds
-              alreadyCompleted: false
-            });
-          });
-        }
-      );
+          );
     }
   );
 });
@@ -278,8 +417,18 @@ app.get('/api/quiz/:sessionId', (req, res) => {
 // Start quiz attempt
 app.post('/api/quiz/:sessionId/start', (req, res) => {
   const { sessionId } = req.params;
-  const userIp = req.ip;
+  const { studentName, studentEmail, schoolName } = req.body;
+  
+  // Better IP detection for serverless environments
+  const userIp = req.headers['x-forwarded-for'] || req.connection.remoteAddress || req.ip || 'anonymous';
   const attemptId = uuidv4();
+
+  // Validate student information
+  if (!studentName || !studentEmail || !schoolName) {
+    return res.status(400).json({ error: 'Student name, email, and school name are required' });
+  }
+
+  console.log('Starting quiz attempt:', { sessionId, userIp, attemptId, studentName, studentEmail, schoolName });
 
   // Check if session is valid
   db.get(
@@ -299,18 +448,59 @@ app.post('/api/quiz/:sessionId/start', (req, res) => {
             return res.json({ attemptId: existingAttempt.id });
           }
 
-          // Create new attempt
+          // Create new attempt with student information and explicit start time
+          const startTime = new Date().toISOString();
           db.run(
-            "INSERT INTO quiz_attempts (id, session_id, user_ip) VALUES (?, ?, ?)",
-            [attemptId, sessionId, userIp],
+            "INSERT INTO quiz_attempts (id, session_id, user_ip, student_name, student_email, school_name, started_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            [attemptId, sessionId, userIp, studentName, studentEmail, schoolName, startTime],
             function(err) {
               if (err) {
+                console.error('Failed to create quiz attempt:', err);
                 return res.status(500).json({ error: 'Failed to start quiz' });
               }
               
-              res.json({ attemptId });
+              console.log('Quiz attempt created with explicit start time:', startTime);
+              res.json({ 
+                attemptId,
+                startTime: startTime 
+              });
             }
           );
+        }
+      );
+    }
+  );
+});
+
+// Save current answers (for auto-save during quiz)
+app.post('/api/quiz/:sessionId/save-answers', (req, res) => {
+  const { sessionId } = req.params;
+  const { attemptId, answers } = req.body;
+  const userIp = req.headers['x-forwarded-for'] || req.connection.remoteAddress || req.ip || 'anonymous';
+
+  console.log('Saving current answers for attempt:', attemptId, 'Answers count:', Object.keys(answers || {}).length);
+
+  // Verify attempt belongs to user and is not completed
+  db.get(
+    "SELECT * FROM quiz_attempts WHERE id = ? AND session_id = ? AND is_completed = 0",
+    [attemptId, sessionId],
+    (err, attempt) => {
+      if (err || !attempt) {
+        return res.status(404).json({ error: 'Invalid attempt' });
+      }
+
+      // Update current answers (but don't mark as completed)
+      db.run(
+        "UPDATE quiz_attempts SET answers = ? WHERE id = ?",
+        [JSON.stringify(answers), attemptId],
+        function(err) {
+          if (err) {
+            console.error('Failed to save current answers:', err);
+            return res.status(500).json({ error: 'Failed to save answers' });
+          }
+
+          console.log('Answers saved successfully for attempt:', attemptId);
+          res.json({ success: true, saved: Object.keys(answers || {}).length });
         }
       );
     }
@@ -321,22 +511,33 @@ app.post('/api/quiz/:sessionId/start', (req, res) => {
 app.post('/api/quiz/:sessionId/submit', (req, res) => {
   const { sessionId } = req.params;
   const { attemptId, answers } = req.body;
-  const userIp = req.ip;
+  // Better IP detection for serverless environments
+  const userIp = req.headers['x-forwarded-for'] || req.connection.remoteAddress || req.ip || 'anonymous';
 
-  // Verify attempt belongs to user
+  console.log('Quiz submission attempt:', { sessionId, attemptId, userIp, answersReceived: !!answers });
+
+  // Verify attempt belongs to user (more flexible for serverless environments)
   db.get(
-    "SELECT * FROM quiz_attempts WHERE id = ? AND session_id = ? AND user_ip = ? AND is_completed = 0",
-    [attemptId, sessionId, userIp],
+    "SELECT * FROM quiz_attempts WHERE id = ? AND session_id = ? AND is_completed = 0",
+    [attemptId, sessionId],
     (err, attempt) => {
       if (err || !attempt) {
-        return res.status(404).json({ error: 'Invalid attempt' });
+        console.log('Attempt verification failed:', { err, attempt, attemptId, sessionId });
+        return res.status(404).json({ error: 'Invalid attempt or already completed' });
       }
+
+      // Log for debugging
+      console.log('Attempt found:', { attemptId: attempt.id, sessionId: attempt.session_id, originalIp: attempt.user_ip, currentIp: userIp });
 
       // Calculate score
       db.all("SELECT id, correct_answer FROM quiz_questions", (err, questions) => {
         if (err) {
+          console.error('Failed to fetch questions for scoring:', err);
           return res.status(500).json({ error: 'Failed to calculate score' });
         }
+
+        console.log('Questions for scoring:', questions.length);
+        console.log('Submitted answers:', answers);
 
         let score = 0;
         questions.forEach(question => {
@@ -345,29 +546,48 @@ app.post('/api/quiz/:sessionId/submit', (req, res) => {
           }
         });
 
+        console.log('Calculated score:', score, 'out of', questions.length);
+
         // Update attempt with completion
+        const completedAt = new Date().toISOString();
+        console.log('Manual quiz submission - completed at:', completedAt, 'local:', new Date().toLocaleString());
+        
         db.run(
-          "UPDATE quiz_attempts SET completed_at = CURRENT_TIMESTAMP, score = ?, answers = ?, is_completed = 1 WHERE id = ?",
-          [score, JSON.stringify(answers), attemptId],
+          "UPDATE quiz_attempts SET completed_at = ?, score = ?, answers = ?, is_completed = 1 WHERE id = ?",
+          [completedAt, score, JSON.stringify(answers), attemptId],
           function(err) {
             if (err) {
+              console.error('Failed to update attempt:', err);
               return res.status(500).json({ error: 'Failed to submit quiz' });
             }
 
-            // Generate certificate
-            generateCertificate(attemptId, score, (err, filename) => {
-              if (err) {
-                console.error('Certificate generation failed:', err);
-              }
+            console.log('Quiz submission successful for attempt:', attemptId, 'Score:', score);
 
+            // Try to generate certificate (may fail in serverless environment)
+            try {
+              generateCertificate(attemptId, score, (err, filename) => {
+                // Always respond, even if certificate generation fails
+                res.json({
+                  score,
+                  totalQuestions: questions.length,
+                  completed: true,
+                  attemptId,
+                  certificate: filename || null,
+                  message: err ? 'Quiz completed successfully (certificate unavailable)' : 'Quiz completed successfully'
+                });
+              });
+            } catch (certError) {
+              console.log('Certificate generation not available in serverless environment');
+              // Still return success response without certificate
               res.json({
                 score,
                 totalQuestions: questions.length,
                 completed: true,
                 attemptId,
-                certificate: filename || null
+                certificate: null,
+                message: 'Quiz completed successfully (certificate unavailable in this environment)'
               });
-            });
+            }
           }
         );
       });
@@ -388,22 +608,143 @@ app.get('/certificate/:attemptId', (req, res) => {
   }
 });
 
+// Admin: Get recent quiz sessions
+app.get('/admin/sessions', (req, res) => {
+  // Get recent sessions from the last 48 hours
+  db.all(
+    `SELECT id, admin_email, created_at, expires_at, is_active,
+            (SELECT COUNT(*) FROM quiz_attempts WHERE session_id = quiz_sessions.id AND is_completed = 1) as completed_attempts
+     FROM quiz_sessions 
+     WHERE created_at > datetime('now', '-48 hours')
+     ORDER BY created_at DESC
+     LIMIT 10`,
+    [],
+    (err, sessions) => {
+      if (err) {
+        console.error('Failed to fetch recent sessions:', err);
+        return res.status(500).json({ error: 'Failed to fetch sessions' });
+      }
+
+      res.json({ sessions });
+    }
+  );
+});
+
 // Admin: Get quiz results
 app.get('/admin/results/:sessionId', (req, res) => {
   const { sessionId } = req.params;
 
   db.all(
-    `SELECT qa.*, qs.admin_email 
+    `SELECT qa.id, qa.session_id, qa.user_ip, qa.student_name, qa.student_email, qa.school_name,
+            qa.started_at, qa.completed_at, qa.score, qa.answers,
+            qs.admin_email, qs.created_at as session_created
      FROM quiz_attempts qa 
      JOIN quiz_sessions qs ON qa.session_id = qs.id 
-     WHERE qa.session_id = ? AND qa.is_completed = 1`,
+     WHERE qa.session_id = ? AND qa.is_completed = 1
+     ORDER BY qa.completed_at ASC`,
     [sessionId],
     (err, results) => {
       if (err) {
+        console.error('Failed to fetch results for session:', sessionId, err);
         return res.status(500).json({ error: 'Failed to fetch results' });
       }
 
+      // Log the raw timestamps for debugging
+      console.log('Results timestamps for session:', sessionId);
+      results.forEach(result => {
+        console.log('Student:', result.student_name, 
+                   'Started:', result.started_at, 
+                   'Completed:', result.completed_at);
+      });
+
       res.json({ results });
+    }
+  );
+});
+
+// Admin: Export quiz results as CSV
+app.get('/admin/export/:sessionId', (req, res) => {
+  const { sessionId } = req.params;
+
+  db.all(
+    `SELECT qa.student_name, qa.student_email, qa.school_name, qa.score, 
+            qa.started_at, qa.completed_at,
+            qs.admin_email, qs.created_at as session_created
+     FROM quiz_attempts qa 
+     JOIN quiz_sessions qs ON qa.session_id = qs.id 
+     WHERE qa.session_id = ? AND qa.is_completed = 1
+     ORDER BY qa.completed_at ASC`,
+    [sessionId],
+    (err, results) => {
+      if (err) {
+        console.error('Failed to fetch results for CSV export:', err);
+        return res.status(500).json({ error: 'Failed to fetch results for export' });
+      }
+
+      if (results.length === 0) {
+        return res.status(404).json({ error: 'No completed attempts found for this session' });
+      }
+
+      // Generate CSV content with proper timestamp handling
+      const csvHeader = 'Student Name,Email ID,School Name,Score,Total Questions,Started At,Completed At,Session Created\n';
+      
+      const csvRows = results.map(result => {
+        // Ensure proper date formatting - handle both ISO strings and SQLite datetime format
+        const formatDate = (dateString) => {
+          if (!dateString) return 'N/A';
+          try {
+            const date = new Date(dateString);
+            // Check if date is valid
+            if (isNaN(date.getTime())) {
+              // If direct parsing failed, try adding 'Z' for SQLite UTC dates
+              const utcDate = new Date(dateString + 'Z');
+              return isNaN(utcDate.getTime()) ? dateString : utcDate.toLocaleString();
+            }
+            return date.toLocaleString();
+          } catch (e) {
+            console.error('Date formatting error:', e, 'Input:', dateString);
+            return dateString;
+          }
+        };
+
+        const startedDate = formatDate(result.started_at);
+        const completedDate = formatDate(result.completed_at);
+        const sessionDate = formatDate(result.session_created);
+        
+        console.log('CSV formatting - Student:', result.student_name, 
+                   'Started raw:', result.started_at, 'formatted:', startedDate,
+                   'Completed raw:', result.completed_at, 'formatted:', completedDate);
+        
+        // Get total questions count
+        return new Promise((resolve) => {
+          db.get("SELECT COUNT(*) as total FROM quiz_questions", (err, countResult) => {
+            const totalQuestions = countResult ? countResult.total : 5;
+            resolve([
+              `"${result.student_name}"`,
+              `"${result.student_email}"`,
+              `"${result.school_name}"`,
+              result.score,
+              totalQuestions,
+              `"${startedDate}"`,
+              `"${completedDate}"`,
+              `"${sessionDate}"`
+            ].join(','));
+          });
+        });
+      });
+
+      Promise.all(csvRows).then(csvData => {
+        const csvContent = csvHeader + csvData.join('\n');
+        
+        // Set headers for CSV download
+        res.setHeader('Content-Type', 'text/csv');
+        res.setHeader('Content-Disposition', `attachment; filename="quiz_results_${sessionId}_${new Date().toISOString().split('T')[0]}.csv"`);
+        
+        res.send(csvContent);
+      }).catch(error => {
+        console.error('Error generating CSV:', error);
+        res.status(500).json({ error: 'Failed to generate CSV' });
+      });
     }
   );
 });

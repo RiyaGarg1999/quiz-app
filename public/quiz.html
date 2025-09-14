@@ -280,6 +280,55 @@
                 <p>This quiz session has expired and is no longer available.</p>
             </div>
 
+            <!-- Student Information State -->
+            <div id="studentInfoState" style="display: none;">
+                <h2>Before Starting the Quiz</h2>
+                <p>Please provide your information to begin the quiz:</p>
+                
+                <form id="studentInfoForm" style="max-width: 500px; margin: 0 auto;">
+                    <div style="margin-bottom: 20px;">
+                        <label for="studentName" style="display: block; margin-bottom: 8px; font-weight: 600; color: #333;">Student Name *</label>
+                        <input 
+                            type="text" 
+                            id="studentName" 
+                            required 
+                            style="width: 100%; padding: 12px; border: 2px solid #e1e5e9; border-radius: 8px; font-size: 16px;"
+                            placeholder="Enter your full name"
+                        >
+                    </div>
+                    
+                    <div style="margin-bottom: 20px;">
+                        <label for="studentEmail" style="display: block; margin-bottom: 8px; font-weight: 600; color: #333;">Email ID *</label>
+                        <input 
+                            type="email" 
+                            id="studentEmail" 
+                            required 
+                            style="width: 100%; padding: 12px; border: 2px solid #e1e5e9; border-radius: 8px; font-size: 16px;"
+                            placeholder="Enter your email address"
+                        >
+                    </div>
+                    
+                    <div style="margin-bottom: 30px;">
+                        <label for="schoolName" style="display: block; margin-bottom: 8px; font-weight: 600; color: #333;">School/Institution Name *</label>
+                        <input 
+                            type="text" 
+                            id="schoolName" 
+                            required 
+                            style="width: 100%; padding: 12px; border: 2px solid #e1e5e9; border-radius: 8px; font-size: 16px;"
+                            placeholder="Enter your school or institution name"
+                        >
+                    </div>
+                    
+                    <button type="submit" class="btn submit-btn" id="startQuizBtn">
+                        🚀 Start Quiz
+                    </button>
+                </form>
+                
+                <div style="margin-top: 20px; padding: 15px; background: #e3f2fd; border-radius: 8px; font-size: 14px; color: #1976d2;">
+                    <strong>Note:</strong> You have 10 minutes to complete the quiz once started. Make sure you're ready before clicking "Start Quiz".
+                </div>
+            </div>
+
             <!-- Already Completed State -->
             <div class="completed-message" id="completedState">
                 <div class="completed-icon">✅</div>
@@ -332,6 +381,8 @@
         let currentAttemptId = null;
         let questions = [];
         let sessionId = null;
+        let savedAnswers = {}; // Store saved answers from server
+        let autoSaveTimeout = null; // For debouncing auto-save
 
         // Get session ID from URL
         const urlParts = window.location.pathname.split('/');
@@ -369,6 +420,113 @@
             document.getElementById('progressFill').style.width = `${progress}%`;
         }
 
+        function formatTime(seconds) {
+            const minutes = Math.floor(seconds / 60);
+            const remainingSeconds = seconds % 60;
+            return `${minutes}:${remainingSeconds.toString().padStart(2, '0')}`;
+        }
+
+        function showAlert(message, type = 'info') {
+            // Create alert element
+            const alertDiv = document.createElement('div');
+            alertDiv.style.cssText = `
+                position: fixed;
+                top: 20px;
+                right: 20px;
+                padding: 15px 20px;
+                border-radius: 8px;
+                color: white;
+                font-weight: 600;
+                z-index: 9999;
+                max-width: 300px;
+                box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+            `;
+            
+            // Set background color based on type
+            switch(type) {
+                case 'success': alertDiv.style.backgroundColor = '#28a745'; break;
+                case 'error': alertDiv.style.backgroundColor = '#dc3545'; break;
+                case 'warning': alertDiv.style.backgroundColor = '#ffc107'; alertDiv.style.color = '#333'; break;
+                default: alertDiv.style.backgroundColor = '#17a2b8';
+            }
+            
+            alertDiv.textContent = message;
+            document.body.appendChild(alertDiv);
+            
+            // Remove after 5 seconds
+            setTimeout(() => {
+                if (alertDiv.parentNode) {
+                    alertDiv.parentNode.removeChild(alertDiv);
+                }
+            }, 5000);
+        }
+
+        function restoreSavedAnswers() {
+            console.log('Restoring saved answers:', savedAnswers);
+            
+            // Restore each saved answer
+            Object.keys(savedAnswers).forEach(questionId => {
+                const answer = savedAnswers[questionId];
+                const radioButton = document.querySelector(`input[name="q${questionId}"][value="${answer}"]`);
+                
+                if (radioButton) {
+                    radioButton.checked = true;
+                    
+                    // Update visual selection
+                    const option = radioButton.closest('.option');
+                    if (option) {
+                        option.classList.add('selected');
+                        
+                        // Remove selected class from siblings
+                        const siblings = option.parentElement.querySelectorAll('.option');
+                        siblings.forEach(sibling => {
+                            if (sibling !== option) {
+                                sibling.classList.remove('selected');
+                            }
+                        });
+                    }
+                }
+            });
+            
+            updateProgress();
+        }
+
+        async function autoSaveAnswers() {
+            if (!currentAttemptId) return;
+            
+            // Clear existing timeout
+            if (autoSaveTimeout) {
+                clearTimeout(autoSaveTimeout);
+            }
+            
+            // Debounce auto-save to avoid too many requests
+            autoSaveTimeout = setTimeout(async () => {
+                try {
+                    const currentAnswers = collectAnswers();
+                    
+                    const response = await fetch(`/api/quiz/${sessionId}/save-answers`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            attemptId: currentAttemptId,
+                            answers: currentAnswers
+                        })
+                    });
+                    
+                    if (response.ok) {
+                        const data = await response.json();
+                        console.log('Answers auto-saved:', data.saved, 'answers');
+                        // Update local saved answers
+                        savedAnswers = currentAnswers;
+                    } else {
+                        console.error('Failed to auto-save answers');
+                    }
+                } catch (error) {
+                    console.error('Auto-save error:', error);
+                }
+            }, 1000); // Wait 1 second after last change
+        }
+
         function renderQuestions() {
             const container = document.getElementById('questionsContainer');
             container.innerHTML = '';
@@ -401,20 +559,23 @@
                 container.appendChild(questionDiv);
             });
 
-            // Add event listeners for option selection
-            document.querySelectorAll('.option').forEach(option => {
-                option.addEventListener('click', () => {
-                    const radio = option.querySelector('input[type="radio"]');
-                    radio.checked = true;
-                    
-                    // Update visual selection
-                    const questionOptions = option.parentElement.querySelectorAll('.option');
-                    questionOptions.forEach(opt => opt.classList.remove('selected'));
-                    option.classList.add('selected');
-                    
-                    updateProgress();
+                // Add event listeners for option selection
+                document.querySelectorAll('.option').forEach(option => {
+                    option.addEventListener('click', () => {
+                        const radio = option.querySelector('input[type="radio"]');
+                        radio.checked = true;
+                        
+                        // Update visual selection
+                        const questionOptions = option.parentElement.querySelectorAll('.option');
+                        questionOptions.forEach(opt => opt.classList.remove('selected'));
+                        option.classList.add('selected');
+                        
+                        updateProgress();
+                        
+                        // Auto-save answers after selection
+                        autoSaveAnswers();
+                    });
                 });
-            });
         }
 
         async function loadQuiz() {
@@ -435,17 +596,57 @@
                     showCompletedState(data.attemptId, data.score);
                     return;
                 }
+
+                if (data.timeExpired) {
+                    showTimeExpiredState(data.attemptId);
+                    return;
+                }
                 
                 questions = data.questions;
                 timeLeft = Math.floor(data.timeLimit / 1000);
                 
-                // Start the quiz attempt
+                // If quiz already started (page reload), continue with existing attempt
+                if (data.alreadyStarted) {
+                    currentAttemptId = data.attemptId;
+                    savedAnswers = data.savedAnswers || {};
+                    showQuizState();
+                    renderQuestions();
+                    restoreSavedAnswers(); // Restore previously saved answers
+                    startTimer();
+                    
+                    // Show reload warning with answer count
+                    const answerCount = Object.keys(savedAnswers).length;
+                    showAlert(`Quiz resumed with ${answerCount} saved answers. Remaining time: ${formatTime(timeLeft)}`, 'info');
+                } else {
+                    // Show student information form for new attempts
+                    showStudentInfoState();
+                }
+                
+            } catch (error) {
+                showError('Network error occurred');
+            }
+        }
+
+        async function startQuizWithStudentInfo(studentName, studentEmail, schoolName) {
+            try {
+                // Start the quiz attempt with student information
                 const startResponse = await fetch(`/api/quiz/${sessionId}/start`, {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' }
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        studentName,
+                        studentEmail,
+                        schoolName
+                    })
                 });
                 
                 const startData = await startResponse.json();
+                
+                if (!startResponse.ok) {
+                    showError(startData.error || 'Failed to start quiz');
+                    return;
+                }
+                
                 currentAttemptId = startData.attemptId;
                 
                 showQuizState();
@@ -457,12 +658,23 @@
             }
         }
 
+        function showStudentInfoState() {
+            document.getElementById('loadingState').style.display = 'none';
+            document.getElementById('errorState').style.display = 'none';
+            document.getElementById('expiredState').style.display = 'none';
+            document.getElementById('completedState').style.display = 'none';
+            document.getElementById('resultsState').style.display = 'none';
+            document.getElementById('quizState').style.display = 'none';
+            document.getElementById('studentInfoState').style.display = 'block';
+        }
+
         function showQuizState() {
             document.getElementById('loadingState').style.display = 'none';
             document.getElementById('errorState').style.display = 'none';
             document.getElementById('expiredState').style.display = 'none';
             document.getElementById('completedState').style.display = 'none';
             document.getElementById('resultsState').style.display = 'none';
+            document.getElementById('studentInfoState').style.display = 'none';
             document.getElementById('quizState').style.display = 'block';
         }
 
@@ -472,6 +684,7 @@
             document.getElementById('expiredState').style.display = 'none';
             document.getElementById('quizState').style.display = 'none';
             document.getElementById('resultsState').style.display = 'none';
+            document.getElementById('studentInfoState').style.display = 'none';
             document.getElementById('completedState').style.display = 'block';
             
             // Set up certificate download
@@ -486,11 +699,33 @@
             document.getElementById('quizState').style.display = 'none';
             document.getElementById('resultsState').style.display = 'none';
             document.getElementById('completedState').style.display = 'none';
+            document.getElementById('studentInfoState').style.display = 'none';
             document.getElementById('expiredState').style.display = 'block';
+        }
+
+        function showTimeExpiredState(attemptId) {
+            clearInterval(timerInterval);
+            
+            document.getElementById('loadingState').style.display = 'none';
+            document.getElementById('errorState').style.display = 'none';
+            document.getElementById('quizState').style.display = 'none';
+            document.getElementById('resultsState').style.display = 'none';
+            document.getElementById('completedState').style.display = 'none';
+            document.getElementById('studentInfoState').style.display = 'none';
+            document.getElementById('expiredState').style.display = 'block';
+            
+            // Update expired message to show it was auto-submitted
+            document.querySelector('#expiredState h2').textContent = 'Quiz Time Expired';
+            document.querySelector('#expiredState p').textContent = 'Your quiz time has expired and has been automatically submitted with current answers.';
         }
 
         function showError(message) {
             document.getElementById('loadingState').style.display = 'none';
+            document.getElementById('studentInfoState').style.display = 'none';
+            document.getElementById('quizState').style.display = 'none';
+            document.getElementById('expiredState').style.display = 'none';
+            document.getElementById('completedState').style.display = 'none';
+            document.getElementById('resultsState').style.display = 'none';
             document.getElementById('errorMessage').textContent = message;
             document.getElementById('errorState').style.display = 'block';
         }
@@ -559,6 +794,34 @@
         }
 
         // Event listeners
+        
+        // Student information form submission
+        document.getElementById('studentInfoForm').addEventListener('submit', (e) => {
+            e.preventDefault();
+            
+            const studentName = document.getElementById('studentName').value.trim();
+            const studentEmail = document.getElementById('studentEmail').value.trim();
+            const schoolName = document.getElementById('schoolName').value.trim();
+            
+            if (!studentName || !studentEmail || !schoolName) {
+                alert('Please fill in all required fields.');
+                return;
+            }
+            
+            // Basic email validation
+            const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+            if (!emailPattern.test(studentEmail)) {
+                alert('Please enter a valid email address.');
+                return;
+            }
+            
+            // Disable the form and start quiz
+            document.getElementById('startQuizBtn').disabled = true;
+            document.getElementById('startQuizBtn').textContent = 'Starting Quiz...';
+            
+            startQuizWithStudentInfo(studentName, studentEmail, schoolName);
+        });
+        
         document.getElementById('submitBtn').addEventListener('click', () => {
             if (confirm('Are you sure you want to submit your quiz? You cannot change your answers after submission.')) {
                 submitQuiz();
