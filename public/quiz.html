@@ -1,0 +1,598 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Quiz - Test Your Knowledge</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 15px;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+            overflow: hidden;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+
+        .header h1 {
+            font-size: 2.5rem;
+            margin-bottom: 10px;
+        }
+
+        .timer {
+            background: rgba(255,255,255,0.2);
+            padding: 10px 20px;
+            border-radius: 25px;
+            font-size: 1.5rem;
+            font-weight: bold;
+            display: inline-block;
+            margin-top: 15px;
+        }
+
+        .content {
+            padding: 40px;
+        }
+
+        .question-container {
+            margin-bottom: 30px;
+            padding: 25px;
+            background: #f8f9fa;
+            border-radius: 15px;
+            border-left: 5px solid #4facfe;
+        }
+
+        .question-number {
+            color: #4facfe;
+            font-weight: bold;
+            font-size: 1.1rem;
+            margin-bottom: 10px;
+        }
+
+        .question-text {
+            font-size: 1.3rem;
+            font-weight: 600;
+            color: #333;
+            margin-bottom: 20px;
+            line-height: 1.4;
+        }
+
+        .options {
+            display: grid;
+            gap: 12px;
+        }
+
+        .option {
+            padding: 15px 20px;
+            background: white;
+            border: 2px solid #e1e5e9;
+            border-radius: 10px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .option:hover {
+            border-color: #4facfe;
+            background: #f0f8ff;
+        }
+
+        .option.selected {
+            border-color: #4facfe;
+            background: #4facfe;
+            color: white;
+        }
+
+        .option input[type="radio"] {
+            margin: 0;
+            width: 20px;
+            height: 20px;
+        }
+
+        .option-text {
+            flex: 1;
+            font-size: 1rem;
+        }
+
+        .btn {
+            background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+            color: white;
+            padding: 15px 30px;
+            border: none;
+            border-radius: 10px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.3s ease;
+        }
+
+        .btn:hover {
+            transform: translateY(-2px);
+        }
+
+        .btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .submit-btn {
+            width: 100%;
+            margin-top: 30px;
+            padding: 20px;
+            font-size: 1.2rem;
+        }
+
+        .results-container {
+            display: none;
+            text-align: center;
+            padding: 40px;
+        }
+
+        .score-display {
+            font-size: 3rem;
+            font-weight: bold;
+            color: #28a745;
+            margin: 20px 0;
+        }
+
+        .certificate-section {
+            margin-top: 30px;
+            padding: 25px;
+            background: #e8f5e8;
+            border-radius: 15px;
+            border: 2px solid #28a745;
+        }
+
+        .certificate-icon {
+            font-size: 4rem;
+            color: #28a745;
+            margin-bottom: 15px;
+        }
+
+        .download-btn {
+            background: #28a745;
+            margin-top: 15px;
+        }
+
+        .download-btn:hover {
+            background: #218838;
+        }
+
+        .completed-message {
+            display: none;
+            text-align: center;
+            padding: 40px;
+        }
+
+        .completed-icon {
+            font-size: 5rem;
+            color: #28a745;
+            margin-bottom: 20px;
+        }
+
+        .progress-bar {
+            width: 100%;
+            height: 8px;
+            background: #e1e5e9;
+            border-radius: 4px;
+            margin: 20px 0;
+            overflow: hidden;
+        }
+
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+            border-radius: 4px;
+            transition: width 0.3s ease;
+        }
+
+        .error-message {
+            background: #f8d7da;
+            color: #721c24;
+            padding: 20px;
+            border-radius: 10px;
+            text-align: center;
+            margin: 20px 0;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 60px;
+            color: #666;
+        }
+
+        .loading::after {
+            content: '';
+            display: inline-block;
+            width: 40px;
+            height: 40px;
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #4facfe;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-top: 20px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .expired-message {
+            display: none;
+            text-align: center;
+            padding: 40px;
+            color: #721c24;
+        }
+
+        .expired-icon {
+            font-size: 5rem;
+            color: #dc3545;
+            margin-bottom: 20px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>Knowledge Quiz</h1>
+            <div class="timer" id="timer">10:00</div>
+        </div>
+        
+        <div class="content">
+            <!-- Loading State -->
+            <div class="loading" id="loadingState">
+                <h2>Loading Quiz...</h2>
+            </div>
+
+            <!-- Error State -->
+            <div class="error-message" id="errorState" style="display: none;">
+                <h2>Quiz Unavailable</h2>
+                <p id="errorMessage"></p>
+            </div>
+
+            <!-- Expired State -->
+            <div class="expired-message" id="expiredState">
+                <div class="expired-icon">⏰</div>
+                <h2>Quiz Session Expired</h2>
+                <p>This quiz session has expired and is no longer available.</p>
+            </div>
+
+            <!-- Already Completed State -->
+            <div class="completed-message" id="completedState">
+                <div class="completed-icon">✅</div>
+                <h2>Quiz Already Completed</h2>
+                <p>You have already completed this quiz.</p>
+                <div class="certificate-section">
+                    <div class="certificate-icon">🏆</div>
+                    <h3>Your Certificate is Ready!</h3>
+                    <p>Download your completion certificate below:</p>
+                    <button class="btn download-btn" id="downloadCertificateBtn">
+                        📄 Download Certificate
+                    </button>
+                </div>
+            </div>
+
+            <!-- Quiz State -->
+            <div id="quizState" style="display: none;">
+                <div class="progress-bar">
+                    <div class="progress-fill" id="progressFill" style="width: 0%"></div>
+                </div>
+                
+                <div id="questionsContainer"></div>
+                
+                <button class="btn submit-btn" id="submitBtn">
+                    Submit Quiz
+                </button>
+            </div>
+
+            <!-- Results State -->
+            <div class="results-container" id="resultsState">
+                <h2>Quiz Completed!</h2>
+                <div class="score-display" id="scoreDisplay"></div>
+                <p id="scoreText"></p>
+                
+                <div class="certificate-section">
+                    <div class="certificate-icon">🎓</div>
+                    <h3>Congratulations!</h3>
+                    <p>You have successfully completed the quiz. Your certificate is ready for download.</p>
+                    <button class="btn download-btn" id="downloadBtn">
+                        📄 Download Certificate
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let timerInterval;
+        let timeLeft = 600; // 10 minutes in seconds
+        let currentAttemptId = null;
+        let questions = [];
+        let sessionId = null;
+
+        // Get session ID from URL
+        const urlParts = window.location.pathname.split('/');
+        sessionId = urlParts[urlParts.length - 1];
+
+        function updateTimer() {
+            const minutes = Math.floor(timeLeft / 60);
+            const seconds = timeLeft % 60;
+            document.getElementById('timer').textContent = 
+                `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+            
+            if (timeLeft <= 0) {
+                clearInterval(timerInterval);
+                autoSubmitQuiz();
+            } else if (timeLeft <= 60) {
+                document.getElementById('timer').style.background = 'rgba(255,0,0,0.8)';
+            } else if (timeLeft <= 300) {
+                document.getElementById('timer').style.background = 'rgba(255,165,0,0.8)';
+            }
+            
+            timeLeft--;
+        }
+
+        function startTimer() {
+            timerInterval = setInterval(updateTimer, 1000);
+        }
+
+        function updateProgress() {
+            const answered = questions.filter(q => {
+                const selected = document.querySelector(`input[name="q${q.id}"]:checked`);
+                return selected !== null;
+            }).length;
+            
+            const progress = (answered / questions.length) * 100;
+            document.getElementById('progressFill').style.width = `${progress}%`;
+        }
+
+        function renderQuestions() {
+            const container = document.getElementById('questionsContainer');
+            container.innerHTML = '';
+            
+            questions.forEach((question, index) => {
+                const questionDiv = document.createElement('div');
+                questionDiv.className = 'question-container';
+                questionDiv.innerHTML = `
+                    <div class="question-number">Question ${index + 1} of ${questions.length}</div>
+                    <div class="question-text">${question.question}</div>
+                    <div class="options">
+                        <label class="option" for="q${question.id}_a">
+                            <input type="radio" id="q${question.id}_a" name="q${question.id}" value="a">
+                            <span class="option-text">A) ${question.option_a}</span>
+                        </label>
+                        <label class="option" for="q${question.id}_b">
+                            <input type="radio" id="q${question.id}_b" name="q${question.id}" value="b">
+                            <span class="option-text">B) ${question.option_b}</span>
+                        </label>
+                        <label class="option" for="q${question.id}_c">
+                            <input type="radio" id="q${question.id}_c" name="q${question.id}" value="c">
+                            <span class="option-text">C) ${question.option_c}</span>
+                        </label>
+                        <label class="option" for="q${question.id}_d">
+                            <input type="radio" id="q${question.id}_d" name="q${question.id}" value="d">
+                            <span class="option-text">D) ${question.option_d}</span>
+                        </label>
+                    </div>
+                `;
+                container.appendChild(questionDiv);
+            });
+
+            // Add event listeners for option selection
+            document.querySelectorAll('.option').forEach(option => {
+                option.addEventListener('click', () => {
+                    const radio = option.querySelector('input[type="radio"]');
+                    radio.checked = true;
+                    
+                    // Update visual selection
+                    const questionOptions = option.parentElement.querySelectorAll('.option');
+                    questionOptions.forEach(opt => opt.classList.remove('selected'));
+                    option.classList.add('selected');
+                    
+                    updateProgress();
+                });
+            });
+        }
+
+        async function loadQuiz() {
+            try {
+                const response = await fetch(`/api/quiz/${sessionId}`);
+                const data = await response.json();
+                
+                if (!response.ok) {
+                    if (response.status === 410) {
+                        showExpiredState();
+                    } else {
+                        showError(data.error || 'Failed to load quiz');
+                    }
+                    return;
+                }
+                
+                if (data.alreadyCompleted) {
+                    showCompletedState(data.attemptId, data.score);
+                    return;
+                }
+                
+                questions = data.questions;
+                timeLeft = Math.floor(data.timeLimit / 1000);
+                
+                // Start the quiz attempt
+                const startResponse = await fetch(`/api/quiz/${sessionId}/start`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' }
+                });
+                
+                const startData = await startResponse.json();
+                currentAttemptId = startData.attemptId;
+                
+                showQuizState();
+                renderQuestions();
+                startTimer();
+                
+            } catch (error) {
+                showError('Network error occurred');
+            }
+        }
+
+        function showQuizState() {
+            document.getElementById('loadingState').style.display = 'none';
+            document.getElementById('errorState').style.display = 'none';
+            document.getElementById('expiredState').style.display = 'none';
+            document.getElementById('completedState').style.display = 'none';
+            document.getElementById('resultsState').style.display = 'none';
+            document.getElementById('quizState').style.display = 'block';
+        }
+
+        function showCompletedState(attemptId, score) {
+            document.getElementById('loadingState').style.display = 'none';
+            document.getElementById('errorState').style.display = 'none';
+            document.getElementById('expiredState').style.display = 'none';
+            document.getElementById('quizState').style.display = 'none';
+            document.getElementById('resultsState').style.display = 'none';
+            document.getElementById('completedState').style.display = 'block';
+            
+            // Set up certificate download
+            document.getElementById('downloadCertificateBtn').onclick = () => {
+                window.open(`/certificate/${attemptId}`, '_blank');
+            };
+        }
+
+        function showExpiredState() {
+            document.getElementById('loadingState').style.display = 'none';
+            document.getElementById('errorState').style.display = 'none';
+            document.getElementById('quizState').style.display = 'none';
+            document.getElementById('resultsState').style.display = 'none';
+            document.getElementById('completedState').style.display = 'none';
+            document.getElementById('expiredState').style.display = 'block';
+        }
+
+        function showError(message) {
+            document.getElementById('loadingState').style.display = 'none';
+            document.getElementById('errorMessage').textContent = message;
+            document.getElementById('errorState').style.display = 'block';
+        }
+
+        function showResults(score, totalQuestions, attemptId) {
+            clearInterval(timerInterval);
+            
+            document.getElementById('quizState').style.display = 'none';
+            document.getElementById('scoreDisplay').textContent = `${score}/${totalQuestions}`;
+            document.getElementById('scoreText').textContent = 
+                `You scored ${score} out of ${totalQuestions} questions correctly!`;
+            
+            document.getElementById('downloadBtn').onclick = () => {
+                window.open(`/certificate/${attemptId}`, '_blank');
+            };
+            
+            document.getElementById('resultsState').style.display = 'block';
+        }
+
+        function collectAnswers() {
+            const answers = {};
+            questions.forEach(question => {
+                const selected = document.querySelector(`input[name="q${question.id}"]:checked`);
+                if (selected) {
+                    answers[question.id] = selected.value;
+                }
+            });
+            return answers;
+        }
+
+        async function submitQuiz(answers = null) {
+            if (!currentAttemptId) return;
+            
+            const finalAnswers = answers || collectAnswers();
+            
+            try {
+                const response = await fetch(`/api/quiz/${sessionId}/submit`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        attemptId: currentAttemptId,
+                        answers: finalAnswers
+                    })
+                });
+                
+                const data = await response.json();
+                
+                if (response.ok) {
+                    showResults(data.score, data.totalQuestions, data.attemptId);
+                } else {
+                    alert('Failed to submit quiz: ' + (data.error || 'Unknown error'));
+                }
+            } catch (error) {
+                alert('Network error occurred while submitting');
+            }
+        }
+
+        function autoSubmitQuiz() {
+            document.getElementById('submitBtn').disabled = true;
+            document.getElementById('timer').textContent = 'TIME UP!';
+            document.getElementById('timer').style.background = 'rgba(255,0,0,0.9)';
+            
+            setTimeout(() => {
+                submitQuiz();
+            }, 2000);
+        }
+
+        // Event listeners
+        document.getElementById('submitBtn').addEventListener('click', () => {
+            if (confirm('Are you sure you want to submit your quiz? You cannot change your answers after submission.')) {
+                submitQuiz();
+            }
+        });
+
+        // Load quiz when page loads
+        loadQuiz();
+
+        // Prevent back button and refresh
+        window.addEventListener('beforeunload', (e) => {
+            if (currentAttemptId && document.getElementById('quizState').style.display !== 'none') {
+                e.preventDefault();
+                e.returnValue = '';
+            }
+        });
+
+        // Prevent right-click context menu during quiz
+        document.addEventListener('contextmenu', (e) => {
+            if (document.getElementById('quizState').style.display !== 'none') {
+                e.preventDefault();
+            }
+        });
+
+        // Prevent F12, Ctrl+Shift+I, Ctrl+U during quiz
+        document.addEventListener('keydown', (e) => {
+            if (document.getElementById('quizState').style.display !== 'none') {
+                if (e.key === 'F12' || 
+                    (e.ctrlKey && e.shiftKey && e.key === 'I') ||
+                    (e.ctrlKey && e.key === 'u')) {
+                    e.preventDefault();
+                }
+            }
+        });
+    </script>
+</body>
+</html>
