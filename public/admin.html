@@ -709,6 +709,7 @@
                                         <th>Email</th>
                                         <th>School</th>
                                         <th>Score</th>
+                                        <th>Gmail Verified</th>
                                         <th>Started At</th>
                                         <th>Completed At</th>
                                         <th>IP Address</th>
@@ -718,12 +719,14 @@
                         `;
                         
                         data.results.forEach(result => {
+                            const gmailVerified = result.email_verified ? '✅ Yes' : '❌ No';
                             tableHTML += `
                                 <tr>
                                     <td>${result.student_name || 'N/A'}</td>
                                     <td>${result.student_email || 'N/A'}</td>
                                     <td>${result.school_name || 'N/A'}</td>
                                     <td>${result.score}/5</td>
+                                    <td style="text-align: center;">${gmailVerified}</td>
                                     <td>${result.started_at ? new Date(result.started_at).toLocaleString() : 'N/A'}</td>
                                     <td>${new Date(result.completed_at).toLocaleString()}</td>
                                     <td>${result.user_ip}</td>
@@ -903,6 +906,7 @@
                                                 <th style="border: 1px solid #ddd; padding: 6px; text-align: left;">Student</th>
                                                 <th style="border: 1px solid #ddd; padding: 6px; text-align: left;">Email</th>
                                                 <th style="border: 1px solid #ddd; padding: 6px; text-align: center;">Score</th>
+                                                <th style="border: 1px solid #ddd; padding: 6px; text-align: center;">Gmail ✓</th>
                                                 <th style="border: 1px solid #ddd; padding: 6px; text-align: center;">Completed</th>
                                             </tr>
                                         </thead>
@@ -910,11 +914,13 @@
                         `;
                         
                         data.results.forEach(result => {
+                            const gmailStatus = result.email_verified ? '✅' : '❌';
                             resultsHTML += `
                                 <tr>
                                     <td style="border: 1px solid #ddd; padding: 6px;">${result.student_name || 'N/A'}</td>
                                     <td style="border: 1px solid #ddd; padding: 6px;">${result.student_email || 'N/A'}</td>
                                     <td style="border: 1px solid #ddd; padding: 6px; text-align: center;">${result.score}/5</td>
+                                    <td style="border: 1px solid #ddd; padding: 6px; text-align: center;">${gmailStatus}</td>
                                     <td style="border: 1px solid #ddd; padding: 6px; text-align: center;">${new Date(result.completed_at).toLocaleString()}</td>
                                 </tr>
                             `;

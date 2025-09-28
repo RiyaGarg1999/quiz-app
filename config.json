@@ -1,0 +1,16 @@
+{
+  "oauth": "disable",
+  "app": {
+    "name": "Quiz Application",
+    "version": "1.0.0",
+    "description": "Timed quiz application with optional Gmail verification"
+  },
+  "security": {
+    "requireGmailVerification": true,
+    "allowedEmailDomains": ["gmail.com"]
+  },
+  "quiz": {
+    "timeLimit": 600,
+    "sessionValidityHours": 24
+  }
+}

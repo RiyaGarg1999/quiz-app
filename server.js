@@ -6,9 +6,43 @@ const path = require('path');
 const fs = require('fs');
 const PDFDocument = require('pdfkit');
 const rateLimit = require('express-rate-limit');
+const { OAuth2Client } = require('google-auth-library');
+require('dotenv').config();
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+
+// Load configuration
+let config = {};
+try {
+  const configPath = path.join(__dirname, 'config.json');
+  const configData = fs.readFileSync(configPath, 'utf8');
+  config = JSON.parse(configData);
+  console.log('Configuration loaded:', config);
+} catch (error) {
+  console.log('No config.json found, using default configuration');
+  config = {
+    oauth: "disable",
+    app: { name: "Quiz Application" },
+    security: { requireGmailVerification: false, allowedEmailDomains: ["gmail.com"] }
+  };
+}
+
+// Google OAuth2 Client Configuration (only if OAuth is enabled)
+let googleClient = null;
+const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || 'your_google_client_id_here.apps.googleusercontent.com';
+
+if (config.oauth === 'enable') {
+  try {
+    googleClient = new OAuth2Client(GOOGLE_CLIENT_ID);
+    console.log('Google OAuth2 client initialized');
+  } catch (error) {
+    console.warn('Failed to initialize Google OAuth2 client:', error.message);
+    config.oauth = 'disable'; // Fallback to disable mode
+  }
+} else {
+  console.log('Google OAuth is disabled in config');
+}
 
 // Middleware
 app.use(cors());
@@ -88,6 +122,8 @@ db.serialize(() => {
     student_name TEXT,
     student_email TEXT,
     school_name TEXT,
+    google_id TEXT,
+    email_verified BOOLEAN DEFAULT 0,
     started_at DATETIME DEFAULT (datetime('now')),
     completed_at DATETIME,
     score INTEGER,
@@ -95,6 +131,42 @@ db.serialize(() => {
     is_completed BOOLEAN DEFAULT 0,
     FOREIGN KEY(session_id) REFERENCES quiz_sessions(id)
   )`);
+
+  // Database migration: Add new columns if they don't exist
+  db.all("PRAGMA table_info(quiz_attempts)", (err, columns) => {
+    if (err) {
+      console.error('Error checking table structure:', err);
+      return;
+    }
+    
+    const columnNames = columns.map(col => col.name);
+    
+    // Add google_id column if it doesn't exist
+    if (!columnNames.includes('google_id')) {
+      db.run("ALTER TABLE quiz_attempts ADD COLUMN google_id TEXT", (err) => {
+        if (err) {
+          console.error('Failed to add google_id column:', err);
+        } else {
+          console.log('✅ Added google_id column to quiz_attempts table');
+        }
+      });
+    }
+    
+    // Add email_verified column if it doesn't exist
+    if (!columnNames.includes('email_verified')) {
+      db.run("ALTER TABLE quiz_attempts ADD COLUMN email_verified BOOLEAN DEFAULT 0", (err) => {
+        if (err) {
+          console.error('Failed to add email_verified column:', err);
+        } else {
+          console.log('✅ Added email_verified column to quiz_attempts table');
+        }
+      });
+    }
+    
+    if (columnNames.includes('google_id') && columnNames.includes('email_verified')) {
+      console.log('✅ Database schema is up to date');
+    }
+  });
 
   // Quiz questions table (predefined 5 MCQ questions)
   db.run(`CREATE TABLE IF NOT EXISTS quiz_questions (
@@ -200,6 +272,99 @@ function generateCertificate(attemptId, score, callback) {
 }
 
 // Routes
+
+// Configuration endpoint
+app.get('/api/config', (req, res) => {
+  res.json({
+    oauth: config.oauth,
+    appName: config.app.name,
+    googleClientId: config.oauth === 'enable' ? GOOGLE_CLIENT_ID : null,
+    requireGmailVerification: config.security?.requireGmailVerification || false,
+    allowedEmailDomains: config.security?.allowedEmailDomains || []
+  });
+});
+
+// Google OAuth verification endpoint
+app.post('/auth/verify-google-token', async (req, res) => {
+  // Check if OAuth is enabled
+  if (config.oauth !== 'enable') {
+    return res.status(400).json({ 
+      error: 'OAuth verification is disabled',
+      details: 'Google OAuth verification is not currently enabled'
+    });
+  }
+
+  const { idToken } = req.body;
+  
+  if (!idToken) {
+    return res.status(400).json({ error: 'ID token is required' });
+  }
+
+  if (!googleClient) {
+    return res.status(500).json({ 
+      error: 'OAuth not properly configured',
+      details: 'Google OAuth client is not initialized'
+    });
+  }
+
+  try {
+    // Verify the Google ID token
+    const ticket = await googleClient.verifyIdToken({
+      idToken: idToken,
+      audience: GOOGLE_CLIENT_ID,
+    });
+
+    const payload = ticket.getPayload();
+    
+    // Check if email verification is required
+    const allowedDomains = config.security?.allowedEmailDomains || ['gmail.com'];
+    const emailDomain = payload.email.split('@')[1];
+    
+    if (!payload.email_verified || !allowedDomains.includes(emailDomain)) {
+      return res.status(400).json({ 
+        error: `Please use a verified ${allowedDomains.join(' or ')} account`,
+        details: `Only ${allowedDomains.join(', ')} accounts are allowed for this quiz`
+      });
+    }
+
+    // Extract verified user information
+    const userInfo = {
+      email: payload.email,
+      name: payload.name,
+      picture: payload.picture,
+      emailVerified: payload.email_verified,
+      googleId: payload.sub
+    };
+
+    console.log('Google OAuth verification successful for:', userInfo.email);
+
+    res.json({
+      success: true,
+      user: userInfo,
+      message: 'Email verification successful'
+    });
+
+  } catch (error) {
+    console.error('Google OAuth verification failed:', error);
+    
+    if (error.message.includes('Token used too early') || error.message.includes('Token used too late')) {
+      return res.status(400).json({ 
+        error: 'Invalid token timing',
+        details: 'Please try signing in again'
+      });
+    } else if (error.message.includes('Invalid token signature')) {
+      return res.status(400).json({ 
+        error: 'Invalid token',
+        details: 'Please try signing in again'
+      });
+    } else {
+      return res.status(400).json({ 
+        error: 'Email verification failed',
+        details: 'Please try again or use a different account'
+      });
+    }
+  }
+});
 
 // Admin: Create new quiz session
 app.post('/admin/create-session', (req, res) => {
@@ -417,7 +582,7 @@ app.get('/api/quiz/:sessionId', (req, res) => {
 // Start quiz attempt
 app.post('/api/quiz/:sessionId/start', (req, res) => {
   const { sessionId } = req.params;
-  const { studentName, studentEmail, schoolName } = req.body;
+  const { studentName, studentEmail, schoolName, googleId, emailVerified } = req.body;
   
   // Better IP detection for serverless environments
   const userIp = req.headers['x-forwarded-for'] || req.connection.remoteAddress || req.ip || 'anonymous';
@@ -428,7 +593,31 @@ app.post('/api/quiz/:sessionId/start', (req, res) => {
     return res.status(400).json({ error: 'Student name, email, and school name are required' });
   }
 
-  console.log('Starting quiz attempt:', { sessionId, userIp, attemptId, studentName, studentEmail, schoolName });
+  // Conditional validation based on configuration
+  if (config.oauth === 'enable') {
+    // OAuth is enabled - require verification
+    if (!emailVerified || !googleId) {
+      return res.status(400).json({ error: 'Please verify your account first using the sign-in button' });
+    }
+    
+    // Check allowed email domains
+    const allowedDomains = config.security?.allowedEmailDomains || ['gmail.com'];
+    const emailDomain = studentEmail.split('@')[1];
+    
+    if (!allowedDomains.includes(emailDomain)) {
+      return res.status(400).json({ 
+        error: `Only ${allowedDomains.join(', ')} accounts are allowed for this quiz`
+      });
+    }
+  } else {
+    // OAuth is disabled - just validate email format
+    const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailPattern.test(studentEmail)) {
+      return res.status(400).json({ error: 'Please enter a valid email address' });
+    }
+  }
+
+  console.log('Starting quiz attempt:', { sessionId, userIp, attemptId, studentName, studentEmail, schoolName, googleId, emailVerified });
 
   // Check if session is valid
   db.get(
@@ -451,15 +640,15 @@ app.post('/api/quiz/:sessionId/start', (req, res) => {
           // Create new attempt with student information and explicit start time
           const startTime = new Date().toISOString();
           db.run(
-            "INSERT INTO quiz_attempts (id, session_id, user_ip, student_name, student_email, school_name, started_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-            [attemptId, sessionId, userIp, studentName, studentEmail, schoolName, startTime],
+            "INSERT INTO quiz_attempts (id, session_id, user_ip, student_name, student_email, school_name, google_id, email_verified, started_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            [attemptId, sessionId, userIp, studentName, studentEmail, schoolName, googleId, emailVerified ? 1 : 0, startTime],
             function(err) {
               if (err) {
                 console.error('Failed to create quiz attempt:', err);
                 return res.status(500).json({ error: 'Failed to start quiz' });
               }
               
-              console.log('Quiz attempt created with explicit start time:', startTime);
+              console.log('Quiz attempt created with Google OAuth verification:', { startTime, googleId, emailVerified });
               res.json({ 
                 attemptId,
                 startTime: startTime 
@@ -636,7 +825,7 @@ app.get('/admin/results/:sessionId', (req, res) => {
 
   db.all(
     `SELECT qa.id, qa.session_id, qa.user_ip, qa.student_name, qa.student_email, qa.school_name,
-            qa.started_at, qa.completed_at, qa.score, qa.answers,
+            qa.started_at, qa.completed_at, qa.score, qa.answers, qa.email_verified,
             qs.admin_email, qs.created_at as session_created
      FROM quiz_attempts qa 
      JOIN quiz_sessions qs ON qa.session_id = qs.id 
@@ -668,7 +857,7 @@ app.get('/admin/export/:sessionId', (req, res) => {
 
   db.all(
     `SELECT qa.student_name, qa.student_email, qa.school_name, qa.score, 
-            qa.started_at, qa.completed_at,
+            qa.started_at, qa.completed_at, qa.email_verified,
             qs.admin_email, qs.created_at as session_created
      FROM quiz_attempts qa 
      JOIN quiz_sessions qs ON qa.session_id = qs.id 
@@ -686,7 +875,7 @@ app.get('/admin/export/:sessionId', (req, res) => {
       }
 
       // Generate CSV content with proper timestamp handling
-      const csvHeader = 'Student Name,Email ID,School Name,Score,Total Questions,Started At,Completed At,Session Created\n';
+      const csvHeader = 'Student Name,Email ID,School Name,Score,Total Questions,Started At,Completed At,Gmail Verified,Session Created\n';
       
       const csvRows = results.map(result => {
         // Ensure proper date formatting - handle both ISO strings and SQLite datetime format
@@ -727,6 +916,7 @@ app.get('/admin/export/:sessionId', (req, res) => {
               totalQuestions,
               `"${startedDate}"`,
               `"${completedDate}"`,
+              result.email_verified ? 'Yes' : 'No',
               `"${sessionDate}"`
             ].join(','));
           });

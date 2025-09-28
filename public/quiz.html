@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Quiz - Test Your Knowledge</title>
+    <script src="https://accounts.google.com/gsi/client" async defer></script>
     <style>
         * {
             margin: 0;
@@ -297,15 +298,8 @@
                         >
                     </div>
                     
-                    <div style="margin-bottom: 20px;">
-                        <label for="studentEmail" style="display: block; margin-bottom: 8px; font-weight: 600; color: #333;">Email ID *</label>
-                        <input 
-                            type="email" 
-                            id="studentEmail" 
-                            required 
-                            style="width: 100%; padding: 12px; border: 2px solid #e1e5e9; border-radius: 8px; font-size: 16px;"
-                            placeholder="Enter your email address"
-                        >
+                    <div data-email-section>
+                        <!-- Email section will be rendered based on configuration -->
                     </div>
                     
                     <div style="margin-bottom: 30px;">
@@ -324,8 +318,8 @@
                     </button>
                 </form>
                 
-                <div style="margin-top: 20px; padding: 15px; background: #e3f2fd; border-radius: 8px; font-size: 14px; color: #1976d2;">
-                    <strong>Note:</strong> You have 10 minutes to complete the quiz once started. Make sure you're ready before clicking "Start Quiz".
+                <div data-info-section>
+                    <!-- Info section will be rendered based on configuration -->
                 </div>
             </div>
 
@@ -383,10 +377,245 @@
         let sessionId = null;
         let savedAnswers = {}; // Store saved answers from server
         let autoSaveTimeout = null; // For debouncing auto-save
+        let googleUserInfo = null; // Store Google user information
+        let appConfig = {}; // Store app configuration
 
         // Get session ID from URL
         const urlParts = window.location.pathname.split('/');
         sessionId = urlParts[urlParts.length - 1];
+
+        // Load app configuration
+        async function loadAppConfig() {
+            try {
+                const response = await fetch('/api/config');
+                const data = await response.json();
+                
+                if (response.ok) {
+                    appConfig = data;
+                    console.log('App configuration loaded:', appConfig);
+                    return true;
+                } else {
+                    console.error('Failed to load configuration');
+                    return false;
+                }
+            } catch (error) {
+                console.error('Error loading configuration:', error);
+                // Default configuration
+                appConfig = {
+                    oauth: 'disable',
+                    appName: 'Quiz Application',
+                    googleClientId: null,
+                    requireGmailVerification: false,
+                    allowedEmailDomains: []
+                };
+                return true;
+            }
+        }
+
+        // Render email input section based on configuration
+        function renderEmailSection() {
+            const emailSection = document.querySelector('[data-email-section]');
+            if (!emailSection) return;
+
+            if (appConfig.oauth === 'enable') {
+                // Render Google Sign-In
+                emailSection.innerHTML = `
+                    <div style="margin-bottom: 20px;">
+                        <label style="display: block; margin-bottom: 8px; font-weight: 600; color: #333;">
+                            ${appConfig.allowedEmailDomains.join(', ')} Account *
+                        </label>
+                        <div id="googleSignInContainer" style="margin-bottom: 12px;">
+                            <div id="g_id_onload"
+                                 data-client_id="${appConfig.googleClientId}"
+                                 data-callback="handleCredentialResponse"
+                                 data-auto_prompt="false">
+                            </div>
+                            <div class="g_id_signin"
+                                 data-type="standard"
+                                 data-size="large"
+                                 data-theme="outline"
+                                 data-text="sign_in_with"
+                                 data-shape="rectangular"
+                                 data-logo_alignment="left">
+                            </div>
+                        </div>
+                        <div id="verifiedEmailInfo" style="display: none; padding: 10px; background: #e8f5e8; border: 1px solid #28a745; border-radius: 6px; font-size: 14px;">
+                            <div style="display: flex; align-items: center; gap: 8px;">
+                                <span style="color: #28a745; font-weight: bold;">✓ Account Verified</span>
+                                <span id="verifiedEmail" style="color: #333;"></span>
+                                <button type="button" id="changeEmailBtn" style="margin-left: auto; background: #dc3545; color: white; border: none; padding: 4px 8px; border-radius: 4px; font-size: 12px; cursor: pointer;">Change</button>
+                            </div>
+                        </div>
+                        <input type="hidden" id="studentEmail" required>
+                        <input type="hidden" id="googleId">
+                        <input type="hidden" id="emailVerified" value="false">
+                    </div>
+                `;
+                
+                // Initialize Google Sign-In
+                setTimeout(() => {
+                    initializeGoogleSignIn();
+                }, 100);
+            } else {
+                // Render regular email input
+                emailSection.innerHTML = `
+                    <div style="margin-bottom: 20px;">
+                        <label for="studentEmail" style="display: block; margin-bottom: 8px; font-weight: 600; color: #333;">Email ID *</label>
+                        <input 
+                            type="email" 
+                            id="studentEmail" 
+                            required 
+                            style="width: 100%; padding: 12px; border: 2px solid #e1e5e9; border-radius: 8px; font-size: 16px;"
+                            placeholder="Enter your email address"
+                        >
+                        <input type="hidden" id="googleId" value="temp-id">
+                        <input type="hidden" id="emailVerified" value="true">
+                    </div>
+                `;
+            }
+        }
+
+        // Update info section based on configuration
+        function renderInfoSection() {
+            const infoSection = document.querySelector('[data-info-section]');
+            if (!infoSection) return;
+
+            if (appConfig.oauth === 'enable') {
+                const domains = appConfig.allowedEmailDomains.join(', ');
+                infoSection.innerHTML = `
+                    <div style="margin-top: 20px; padding: 15px; background: #e3f2fd; border-radius: 8px; font-size: 14px; color: #1976d2;">
+                        <strong>Important:</strong> 
+                        <ul style="margin: 8px 0 0 20px; padding: 0;">
+                            <li>Only <strong>${domains}</strong> accounts are allowed for this quiz</li>
+                            <li>You must verify your account using the sign-in button</li>
+                            <li>You have 10 minutes to complete the quiz once started</li>
+                            <li>Make sure you're ready before clicking "Start Quiz"</li>
+                        </ul>
+                    </div>
+                `;
+            } else {
+                infoSection.innerHTML = `
+                    <div style="margin-top: 20px; padding: 15px; background: #e3f2fd; border-radius: 8px; font-size: 14px; color: #1976d2;">
+                        <strong>Note:</strong> 
+                        <ul style="margin: 8px 0 0 20px; padding: 0;">
+                            <li>Please enter a valid email address</li>
+                            <li>You have 10 minutes to complete the quiz once started</li>
+                            <li>Make sure you're ready before clicking "Start Quiz"</li>
+                        </ul>
+                    </div>
+                `;
+            }
+        }
+
+        // Google Sign-In callback function
+        function handleCredentialResponse(response) {
+            console.log("Encoded JWT ID token: " + response.credential);
+            
+            // Verify the token with our backend
+            fetch('/auth/verify-google-token', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ idToken: response.credential })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    googleUserInfo = data.user;
+                    displayVerifiedEmail(data.user);
+                    
+                    // Auto-fill name if available and field is empty
+                    const nameField = document.getElementById('studentName');
+                    if (!nameField.value && data.user.name) {
+                        nameField.value = data.user.name;
+                    }
+                    
+                    showAlert('Gmail verified successfully!', 'success');
+                } else {
+                    showAlert(data.error || 'Gmail verification failed', 'error');
+                    console.error('Verification failed:', data);
+                }
+            })
+            .catch(error => {
+                showAlert('Network error during verification', 'error');
+                console.error('Verification error:', error);
+            });
+        }
+
+        function displayVerifiedEmail(userInfo) {
+            // Update UI to show verified email
+            document.getElementById('googleSignInContainer').style.display = 'none';
+            document.getElementById('verifiedEmailInfo').style.display = 'block';
+            document.getElementById('verifiedEmail').textContent = userInfo.email;
+            
+            // Set hidden form fields
+            document.getElementById('studentEmail').value = userInfo.email;
+            document.getElementById('googleId').value = userInfo.googleId;
+            document.getElementById('emailVerified').value = 'true';
+        }
+
+        function resetGoogleSignIn() {
+            // Reset the UI
+            document.getElementById('googleSignInContainer').style.display = 'block';
+            document.getElementById('verifiedEmailInfo').style.display = 'none';
+            
+            // Clear hidden fields
+            document.getElementById('studentEmail').value = '';
+            document.getElementById('googleId').value = '';
+            document.getElementById('emailVerified').value = 'false';
+            
+            googleUserInfo = null;
+            
+            // Re-initialize Google Sign-In
+            google.accounts.id.initialize({
+                client_id: 'your_google_client_id_here.apps.googleusercontent.com',
+                callback: handleCredentialResponse
+            });
+            google.accounts.id.renderButton(
+                document.querySelector('.g_id_signin'),
+                { 
+                    type: 'standard',
+                    size: 'large',
+                    theme: 'outline',
+                    text: 'sign_in_with',
+                    shape: 'rectangular',
+                    logo_alignment: 'left'
+                }
+            );
+        }
+
+        // Initialize Google Sign-In (called conditionally)
+        function initializeGoogleSignIn() {
+            if (typeof google !== 'undefined' && google.accounts && appConfig.googleClientId) {
+                google.accounts.id.initialize({
+                    client_id: appConfig.googleClientId,
+                    callback: handleCredentialResponse
+                });
+                
+                const signInButton = document.querySelector('.g_id_signin');
+                if (signInButton) {
+                    google.accounts.id.renderButton(signInButton, { 
+                        type: 'standard',
+                        size: 'large',
+                        theme: 'outline',
+                        text: 'sign_in_with',
+                        shape: 'rectangular',
+                        logo_alignment: 'left'
+                    });
+                }
+                
+                // Add change email button listener
+                const changeBtn = document.getElementById('changeEmailBtn');
+                if (changeBtn) {
+                    changeBtn.addEventListener('click', function() {
+                        if (confirm('Are you sure you want to change your account? You will need to verify again.')) {
+                            resetGoogleSignIn();
+                        }
+                    });
+                }
+            } else {
+                console.warn('Google Sign-In not available or client ID not configured');
+            }
+        }
 
         function updateTimer() {
             const minutes = Math.floor(timeLeft / 60);
@@ -580,6 +809,17 @@
 
         async function loadQuiz() {
             try {
+                // Load configuration first
+                const configLoaded = await loadAppConfig();
+                if (!configLoaded) {
+                    showError('Failed to load application configuration');
+                    return;
+                }
+                
+                // Render UI based on configuration
+                renderEmailSection();
+                renderInfoSection();
+                
                 const response = await fetch(`/api/quiz/${sessionId}`);
                 const data = await response.json();
                 
@@ -629,6 +869,10 @@
 
         async function startQuizWithStudentInfo(studentName, studentEmail, schoolName) {
             try {
+                // Get values from hidden fields (works for both OAuth and temporary mode)
+                const googleId = document.getElementById('googleId').value;
+                const emailVerified = document.getElementById('emailVerified').value === 'true';
+                
                 // Start the quiz attempt with student information
                 const startResponse = await fetch(`/api/quiz/${sessionId}/start`, {
                     method: 'POST',
@@ -636,7 +880,9 @@
                     body: JSON.stringify({
                         studentName,
                         studentEmail,
-                        schoolName
+                        schoolName,
+                        googleId: googleId,
+                        emailVerified: emailVerified
                     })
                 });
                 
@@ -802,17 +1048,36 @@
             const studentName = document.getElementById('studentName').value.trim();
             const studentEmail = document.getElementById('studentEmail').value.trim();
             const schoolName = document.getElementById('schoolName').value.trim();
+            const emailVerified = document.getElementById('emailVerified').value === 'true';
             
             if (!studentName || !studentEmail || !schoolName) {
                 alert('Please fill in all required fields.');
                 return;
             }
             
-            // Basic email validation
-            const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-            if (!emailPattern.test(studentEmail)) {
-                alert('Please enter a valid email address.');
-                return;
+            // Conditional validation based on configuration
+            if (appConfig.oauth === 'enable') {
+                // OAuth enabled - check if verified
+                if (!emailVerified || !googleUserInfo) {
+                    alert('Please verify your account first using the sign-in button.');
+                    return;
+                }
+                
+                // Check allowed domains
+                const allowedDomains = appConfig.allowedEmailDomains || ['gmail.com'];
+                const emailDomain = studentEmail.split('@')[1];
+                
+                if (!allowedDomains.includes(emailDomain)) {
+                    alert(`Only ${allowedDomains.join(', ')} accounts are allowed for this quiz.`);
+                    return;
+                }
+            } else {
+                // OAuth disabled - basic email validation
+                const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+                if (!emailPattern.test(studentEmail)) {
+                    alert('Please enter a valid email address.');
+                    return;
+                }
             }
             
             // Disable the form and start quiz
@@ -820,6 +1085,11 @@
             document.getElementById('startQuizBtn').textContent = 'Starting Quiz...';
             
             startQuizWithStudentInfo(studentName, studentEmail, schoolName);
+        });
+        
+        // Additional initialization when DOM is ready
+        document.addEventListener('DOMContentLoaded', function() {
+            console.log('DOM loaded, configuration will be loaded when loadQuiz() is called');
         });
         
         document.getElementById('submitBtn').addEventListener('click', () => {
